@@ -1,0 +1,345 @@
+#include <TinyGPS++.h>
+#include <SoftwareSerial.h>
+#include "FS.h"
+#include "SD.h"
+#include "SPI.h"
+#include <Wire.h>
+#include <Adafruit_Sensor.h>
+#include "Adafruit_BME680.h"
+#include <Adafruit_Sensor.h>
+#include <Adafruit_BNO055.h>
+#include <utility/imumaths.h>
+
+TinyGPSPlus gps;
+
+String time_gps;
+String words;
+String a_words;
+String o_words;
+String g_words;
+String m_words;
+
+String gps_str;
+String lat_data;
+String lng_data;
+String time_data;
+int num = 0;
+const char* a_all_words;
+const char* o_all_words;
+const char* g_all_words;
+const char* m_all_words;
+File dataFile;
+
+uint16_t BNO055_SAMPLERATE_DELAY_MS = 100;
+
+// Check I2C device address and correct line below (by default address is 0x29 or 0x28)
+//                                   id, address
+Adafruit_BNO055 bno = Adafruit_BNO055(55, 0x28, &Wire);
+
+#define SEALEVELPRESSURE_HPA (1013.25)
+
+Adafruit_BME680 bme; // I2C
+
+
+void writeFile(fs::FS &fs, const char * path, const char * message){
+    Serial.printf("Writing file: %s\n", path);
+
+    File file = fs.open(path, FILE_WRITE);
+    if(!file){
+        Serial.println("Failed to open file for writing");
+        return;
+    }
+    if(file.println(message)){
+        Serial.println("File written");
+    } else {
+        Serial.println("Write failed");
+    }
+    file.close();
+}
+
+void appendFile(fs::FS &fs, const char * path, const char * message){
+    Serial.printf("Appending to file: %s\n", path);
+
+    File file = fs.open(path, FILE_APPEND);
+    if(!file){
+        Serial.println("Failed to open file for appending");
+        return;
+    }
+    if(file.print(message)){
+        Serial.println("Message appended");
+    } else {
+        Serial.println("Append failed");
+    }
+    file.close();
+}
+
+
+void setup(){
+   Serial2.begin(115200);
+   Serial.begin(115200);
+   while (!Serial) {
+   ; // wait for serial port to connect. Needed for native USB port only
+   }
+   if(!SD.begin()){
+     Serial.println("Card Mount Failed");
+     return;
+   }
+   uint8_t cardType = SD.cardType();
+
+   if(cardType == CARD_NONE){
+     Serial.println("No SD card attached");
+     return;
+   }
+
+    Serial.print("SD Card Type: ");
+    if(cardType == CARD_MMC){
+        Serial.println("MMC");
+    } else if(cardType == CARD_SD){
+        Serial.println("SDSC");
+    } else if(cardType == CARD_SDHC){
+        Serial.println("SDHC");
+    } else {
+        Serial.println("UNKNOWN");
+    }
+
+    uint64_t cardSize = SD.cardSize() / (1024 * 1024);
+    Serial.printf("SD Card Size: %lluMB\n", cardSize);
+
+    //writeFile(SD, "/koreyaro.csv", "time,ido,keido,temp,pres,hum,gas");
+    writeFile(SD, "/koreyaro.csv", "o_x,o_y,o_z,g_x,g_y,g_z,m_x,m_y,m_z,a_x,a_y,a_z,time,ido,keido,temp,pres,hum,gas");
+    //appendFile(SD, "/hello.txt", "World!\n");
+    Serial.printf("Total space: %lluMB\n", SD.totalBytes() / (1024 * 1024));
+    Serial.printf("Used space: %lluMB\n", SD.usedBytes() / (1024 * 1024));
+
+    Serial.println(F("BME680 test"));
+
+      if (!bme.begin()) {
+    Serial.println("Could not find a valid BME680 sensor, check wiring!");
+    while (1);
+  }
+  
+  while (!Serial) delay(10);  // wait for serial port to open!
+
+  Serial.println("Orientation Sensor Test"); Serial.println("");
+
+  if (!bno.begin())
+  {
+    Serial.print("Ooops, no BNO055 detected ... Check your wiring or I2C ADDR!");
+    while (1);
+
+
+  bme.setTemperatureOversampling(BME680_OS_8X);
+  bme.setHumidityOversampling(BME680_OS_2X);
+  bme.setPressureOversampling(BME680_OS_4X);
+  bme.setIIRFilterSize(BME680_FILTER_SIZE_3);
+  bme.setGasHeater(320, 150); // 320*C for 150 ms
+}
+}
+
+void loop(){ 
+  sensors_event_t orientationData , angVelocityData , linearAccelData, magnetometerData, accelerometerData, gravityData;
+  bno.getEvent(&orientationData, Adafruit_BNO055::VECTOR_EULER);
+  bno.getEvent(&angVelocityData, Adafruit_BNO055::VECTOR_GYROSCOPE);
+  bno.getEvent(&linearAccelData, Adafruit_BNO055::VECTOR_LINEARACCEL);
+  bno.getEvent(&magnetometerData, Adafruit_BNO055::VECTOR_MAGNETOMETER);
+  bno.getEvent(&accelerometerData, Adafruit_BNO055::VECTOR_ACCELEROMETER);
+  bno.getEvent(&gravityData, Adafruit_BNO055::VECTOR_GRAVITY);
+
+  printEvent(&orientationData);
+  printEvent(&angVelocityData);
+  printEvent(&linearAccelData);
+  printEvent(&magnetometerData);
+  printEvent(&accelerometerData);
+  printEvent(&gravityData);
+
+
+  int8_t boardTemp = bno.getTemp();
+  Serial.println();
+  Serial.print(F("temperature: "));
+  Serial.println(boardTemp);
+
+  uint8_t system, gyro, accel, mag = 0;
+  bno.getCalibration(&system, &gyro, &accel, &mag);
+  Serial.println();
+  Serial.print("Calibration: Sys=");
+  Serial.print(system);
+  Serial.print(" Gyro=");
+  Serial.print(gyro);
+  Serial.print(" Accel=");
+  Serial.print(accel);
+  Serial.print(" Mag=");
+  Serial.println(mag);
+
+  Serial.println("--");
+  delay(BNO055_SAMPLERATE_DELAY_MS); 
+  
+ while (Serial2.available() > 0){
+ char c = Serial2.read();
+ //Serial.print(c);
+ gps.encode(c);
+ if (gps.location.isUpdated()){
+ String hour_gps = String(gps.time.hour()+9);
+ String minute_gps = String(gps.time.minute());
+ String sec_gps = String(gps.time.second());
+ String centisec_gps = String(gps.time.centisecond());
+ time_gps = String(millis());//hour_gps + ":" + minute_gps + ":" + sec_gps + ":" + centisec_gps;
+ Serial.println(time_gps);
+ Serial.print("LAT="); Serial.println(gps.location.lat(), 6);
+ lat_data = String(gps.location.lat(), 6);
+
+ Serial.print("LONG="); Serial.println(gps.location.lng(), 6);
+ lng_data = String(gps.location.lng(), 6);
+ Serial.print("ALT="); Serial.println(gps.altitude.meters());
+ }
+ }
+ 
+ Serial.println("nuketayo");
+ 
+  if (! bme.performReading()) {
+    Serial.println("Failed to perform reading :(");
+    return;
+  }
+  Serial.println("bmenosaisho");
+  //delay(1000);
+  Serial.print("Temperature = ");
+  Serial.print(bme.temperature);
+  Serial.println(" *C");
+  
+
+  Serial.print("Pressure = ");
+  Serial.print(bme.pressure / 100.0);
+  Serial.println(" hPa");
+  
+
+  Serial.print("Humidity = ");
+  Serial.print(bme.humidity);
+  Serial.println(" %");
+  
+  Serial.print("Gas = ");
+  Serial.print(bme.gas_resistance / 1000.0);
+  Serial.println(" KOhms");
+
+  words = a_words + "," + o_words + "," + m_words + "," + g_words + "," + time_gps + "," + lat_data + "," + lng_data + "," + String(bme.temperature) + "," + String(bme.pressure / 100.0) + "," + String(bme.humidity) + "," +String(bme.gas_resistance / 1000.0);
+  const char* all_data = words.c_str();
+  dataFile = SD.open("/koreyaro.csv", FILE_APPEND);
+  dataFile.println(all_data);
+  dataFile.close();
+}
+
+void bme_char(float bmedata){
+  if(bmedata == bme.gas_resistance / 1000.0){
+    words = String(bmedata) + "\n";
+  }
+  else{
+    words = String(bmedata) + ",";
+  }
+  if(bmedata == bme.temperature){
+    //bme_tem = words;
+    const char* bme_tem = words.c_str();
+    //appendFile(SD, "/koreyaro.csv", bme_tem);
+    //Serial.println(bme_tem);
+  }
+  else if(bmedata == bme.pressure / 100.0){
+    //bme_pres = words;
+    const char* bme_pres = words.c_str();
+  }
+  else if(bmedata == bme.humidity){
+    //bme_hum = words;
+    const char* bme_hum = words.c_str();
+  }
+  else if(bmedata == bme.gas_resistance / 1000.0){
+    //bme_gas = words;
+    const char* bme_gas = words.c_str();
+  }
+}
+
+
+
+
+void printEvent(sensors_event_t* event) {
+  
+  double x = -1000000, y = -1000000 , z = -1000000; //dumb values, easy to spot problem
+  if (event->type == SENSOR_TYPE_ACCELEROMETER) {
+    //dataFile = SD.open("kyuujiku.txt", FILE_WRITE);
+    Serial.print("Accl:");
+    x = event->acceleration.x;
+    y = event->acceleration.y;
+    z = event->acceleration.z;
+
+    a_words = String(event->acceleration.x) + "," + String(event->acceleration.y) + "," + String(event->acceleration.z);
+
+    a_all_words = words.c_str();
+
+    //dataFile.println(all_words);
+  }
+  else if (event->type == SENSOR_TYPE_ORIENTATION) {
+    //dataFile = SD.open("kyuujiku.txt", FILE_WRITE);
+    Serial.print("Orient:");
+    x = event->orientation.x;
+    y = event->orientation.y;
+    z = event->orientation.z;
+
+    o_words = String(event->orientation.x) + "," + String(event->orientation.y) + "," + String(event->orientation.z);
+
+    o_all_words = words.c_str();
+    
+    //dataFile.print(all_words);
+  }
+  else if (event->type == SENSOR_TYPE_MAGNETIC_FIELD) {
+    //dataFile = SD.open("kyuujiku.txt", FILE_WRITE);
+    Serial.print("Mag:");
+    x = event->magnetic.x;
+    y = event->magnetic.y;
+    z = event->magnetic.z;
+    
+    m_words = String(event->magnetic.x) + "," + String(event->magnetic.y) + "," + String(event->magnetic.z);
+
+    m_all_words = words.c_str();
+        
+    //dataFile.print(all_words);
+  }
+  else if (event->type == SENSOR_TYPE_GYROSCOPE) {
+    //dataFile = SD.open("kyuujiku.txt", FILE_WRITE);
+    Serial.print("Gyro:");
+    x = event->gyro.x;
+    y = event->gyro.y;
+    z = event->gyro.z;
+
+    g_words = String(event->gyro.x) + "," + String(event->gyro.y) + "," + String(event->gyro.z);   
+
+    g_all_words = words.c_str();
+     
+    
+  }
+  else if (event->type == SENSOR_TYPE_ROTATION_VECTOR) {
+    Serial.print("Rot:");
+    x = event->gyro.x;
+    y = event->gyro.y;
+    z = event->gyro.z;
+  }
+  else if (event->type == SENSOR_TYPE_LINEAR_ACCELERATION) {
+    Serial.print("Linear:");
+    x = event->acceleration.x;
+    y = event->acceleration.y;
+    z = event->acceleration.z;
+  }
+  else if (event->type == SENSOR_TYPE_GRAVITY) {
+    Serial.print("Gravity:");
+    x = event->acceleration.x;
+    y = event->acceleration.y;
+    z = event->acceleration.z;
+  }
+  else {
+    Serial.print("Unk:");
+  }
+
+  Serial.print("\tx= ");
+  Serial.print(x);
+  Serial.print(" |\ty= ");
+  Serial.print(y);
+  Serial.print(" |\tz= ");
+  Serial.println(z);
+
+  //dataFile.println();
+  //dataFile.close();
+}
